@@ -1,0 +1,6 @@
+make: 进入目录“/home/chen/orangepi-build/kernel/orange-pi-5.10-rk35xx”
+  CC [M]  /home/chen/Linux_Drivers/01_chrdevbase/chrdevbase.o
+  MODPOST /home/chen/Linux_Drivers/01_chrdevbase/Module.symvers
+  CC [M]  /home/chen/Linux_Drivers/01_chrdevbase/chrdevbase.mod.o
+  LD [M]  /home/chen/Linux_Drivers/01_chrdevbase/chrdevbase.ko
+make: 离开目录“/home/chen/orangepi-build/kernel/orange-pi-5.10-rk35xx”

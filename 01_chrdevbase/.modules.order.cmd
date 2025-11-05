@@ -1,0 +1,1 @@
+cmd_/home/chen/Linux_Drivers/01_chrdevbase/modules.order := {   echo /home/chen/Linux_Drivers/01_chrdevbase/chrdevbase.ko; :; } | awk '!x[$$0]++' - > /home/chen/Linux_Drivers/01_chrdevbase/modules.order

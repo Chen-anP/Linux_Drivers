@@ -1,0 +1,1 @@
+cmd_/home/chen/Linux_Drivers/01_chrdevbase/Module.symvers := sed 's/\.ko$$/\.o/' /home/chen/Linux_Drivers/01_chrdevbase/modules.order | scripts/mod/modpost -m -a   -o /home/chen/Linux_Drivers/01_chrdevbase/Module.symvers -e -i Module.symvers   -T -
