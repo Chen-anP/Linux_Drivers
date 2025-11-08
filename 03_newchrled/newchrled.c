@@ -6,8 +6,11 @@
 #include <linux/module.h> 
 #include <linux/errno.h>
 #include <linux/gpio.h>
-#include <asm/uaccess.h>
-#include <asm/io.h> 
+#include <linux/fs.h>
+#include <linux/cdev.h>
+#include <linux/device.h>
+#include <linux/uaccess.h>
+#include <asm/io.h>
 
 // #define LED_MAJOR 200
 // #define LED_NAME "led"
@@ -18,26 +21,27 @@
 #define LEDOFF 0
 #define LEDON 1
 
-#define PMU_GRF_BASE                      (0xFD5F8000)
-#define BUS_IOC_BASE                      (0xFD5F8000)
+#define PMU_GRF_BASE                       (0xFD5F8000)
+#define PMU2_IOC                           (0xFD5F4000)
 //#define VCCIO1_4_BASE                     (0xFD5F8000)
-#define GPIO0_BASE                        (0xFD8A0000)
+#define GPIO0_BASE                         (0xFD8A0000)
 
 
-#define BUS_IOC_GPIO0C_IOMUX_SEL_L       (BUS_IOC_BASE + 0x0010) 
+#define PMU2_IOC_GPIO0C_IOMUX_SEL_H       (PMU2_IOC + 0x0008) 
 //#define VCCIO1_4_IOC_GPIO0C_DS_L        (VCCIO1_4_BASE + 0x0020) 
-#define GPIO_SWPORT_DR_L                (GPIO0_BASE + 0X0000) 
-#define GPIO_SWPORT_DDR_L               (GPIO0_BASE + 0X0008)
+#define GPIO_SWPORT_DR_H                  (GPIO0_BASE + 0X0004) 
+#define GPIO_SWPORT_DDR_H                 (GPIO0_BASE + 0X000C)
 
 
-static void __iomem *BUS_IOC_GPIO0C_IOMUX_SEL_L_VA;
+static void __iomem *PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA;
 //static void __iomem *VCCIO1_4_IOC_GPIO0C_DS_L_VA;
-static void __iomem *GPIO_SWPORT_DR_L_VA;
-static void __iomem *GPIO_SWPORT_DDR_L_VA;
+static void __iomem *GPIO_SWPORT_DR_H_VA;
+static void __iomem *GPIO_SWPORT_DDR_H_VA;
 
-//newchrled设备结构体
-struct newchrled_dev {
-    devt_t devid;
+
+struct newchrled_dev
+{
+    dev_t devid;
     struct cdev cdev;
     struct class *class;
     struct device *device;
@@ -45,38 +49,45 @@ struct newchrled_dev {
     int minor;
 };
 
-struct newchrled_dev newchrled;
 
+struct newchrled_dev newchrled;
 
 void led_switch(u8 state)
 {
     u32 val = 0;
-    val = readl(GPIO_SWPORT_DR_L_VA);
+
     if(state == LEDON)
     {
-        val &= ~(1<<12);
+        val = readl(GPIO_SWPORT_DR_H_VA);
+        val &= ~(0X20<<0);
+        val |= (0X20<<16) | (0X20<<0);
+        writel(val, GPIO_SWPORT_DR_H_VA);
     }
     else if(state == LEDOFF)
     {
-        val |= (1<<12);
+        writel(val, GPIO_SWPORT_DR_H_VA);
+        val = readl(GPIO_SWPORT_DR_H_VA);
+        val &= ~(0X20<<0);
+        val |= (0X20<<16);
+        writel(val, GPIO_SWPORT_DR_H_VA);
     }
-    writel(val, GPIO_SWPORT_DR_L_VA);
+    
 }
 
 void led_remap(void)
 {
-    BUS_IOC_GPIO0C_IOMUX_SEL_L_VA = ioremap(BUS_IOC_GPIO0C_IOMUX_SEL_L, 4);
+    PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA = ioremap(PMU2_IOC_GPIO0C_IOMUX_SEL_H, 4);
     //VCCIO1_4_IOC_GPIO0C_DS_L_VA = ioremap(VCCIO1_4_IOC_GPIO0C_DS_L, 4);
-    GPIO_SWPORT_DR_L_VA = ioremap(GPIO_SWPORT_DR_L, 4);
-    GPIO_SWPORT_DDR_L_VA = ioremap(GPIO_SWPORT_DDR_L, 4);
+    GPIO_SWPORT_DR_H_VA = ioremap(GPIO_SWPORT_DR_H, 4);
+    GPIO_SWPORT_DDR_H_VA = ioremap(GPIO_SWPORT_DDR_H, 4);
 }
 
 void led_unmap(void)
 {
-    iounmap(BUS_IOC_GPIO0C_IOMUX_SEL_L_VA);
+    iounmap(PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA);
     //iounmap(VCCIO1_4_IOC_GPIO0C_DS_L_VA);
-    iounmap(GPIO_SWPORT_DR_L_VA);
-    iounmap(GPIO_SWPORT_DDR_L_VA);
+    iounmap(GPIO_SWPORT_DR_H_VA);
+    iounmap(GPIO_SWPORT_DDR_H_VA);
 }
 
 
@@ -135,32 +146,45 @@ static int __init led_init(void)
     int retvalue;
     //寄存器重映射
     led_remap();
-    //设置gpio0C_12为gpio功能
-    val = readl(BUS_IOC_GPIO0C_IOMUX_SEL_L_VA);
-    val &= ~(0x3<<24);
-    val |= (0x1<<24);
+    //设置为gpio功能
+    val = readl(PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA);
+    val &= ~(0x00F0<<0);
+    val |= (0x00F0<<0) | (0x0<<0);
 
-    writel(val, BUS_IOC_GPIO0C_IOMUX_SEL_L_VA);
-    //设置gpio0C_12 40ohm的驱动能力
+    writel(val, PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA);
+    //设置gpio 40ohm的驱动能力
     // val = readl(VCCIO1_4_IOC_GPIO0C_DS_L_VA);
     // val &= ~(0x3<<24);
     // val |= (0x1<<24);
 
     // writel(val, VCCIO1_4_IOC_GPIO0C_DS_L_VA);
-    //设置gpio0C_12为输出功能
-    val = readl(GPIO_SWPORT_DDR_L_VA);
-    val |= (1<<12);
-    writel(val, GPIO_SWPORT_DDR_L_VA);
+    //设置gpio为输出功能
+    val = readl(GPIO_SWPORT_DDR_H_VA);
+    val &= ~(0X20<<0);
+    val |= (0X20<<16) | (0X20<<0);
+    writel(val, GPIO_SWPORT_DDR_H_VA);
 
+    //设置gpio默认输出高电平，led关闭
+    val = readl(GPIO_SWPORT_DR_H_VA);
+    val &= ~(0X20<<0);
+    val |= (0X20<<16);
+    writel(val, GPIO_SWPORT_DR_H_VA);
 
-    //注册字符设备驱动
+    // retvalue = register_chrdev(LED_MAJOR, LED_NAME, &led_fops);
+    // if(retvalue < 0)
+    // {
+    //     printk("led driver register failed!\r\n");
+    //     goto fail_map; 
+    // }
+    // return 0;
+
     if(newchrled.major)
     {
         newchrled.devid = MKDEV(newchrled.major, 0);
         retvalue = register_chrdev_region(newchrled.devid, NEWCHRLED_CNT, NEWCHRLED_NAME);
         if(retvalue < 0)
         {
-            printk("led driver register failed!\r\n");
+            printk("newchrled driver register failed!\r\n");
             goto fail_map; 
         }
     }
@@ -169,23 +193,17 @@ static int __init led_init(void)
         retvalue = alloc_chrdev_region(&newchrled.devid, 0, NEWCHRLED_CNT, NEWCHRLED_NAME);
         if(retvalue < 0)
         {
-            printk("led driver register failed!\r\n");
-            goto fail_map; 
+            printk("newchrled driver register failed!\r\n");
+            goto fail_map;
         }
+
         newchrled.major = MAJOR(newchrled.devid);
         newchrled.minor = MINOR(newchrled.devid);
     }
 
-    // retvalue = register_chrdev(LED_MAJOR, LED_NAME, &led_fops);
-    // if(retvalue < 0)
-    // {
-    //     printk("led driver register failed!\r\n");
-    //     goto fail_map; 
-    // }
-
-    printk("led driver register successed! major=%d minor=%d\r\n", newchrled.major, newchrled.minor);
-
-    //字符设备初始化
+    printk("newchrled major=%d, minor=%d\r\n", newchrled.major, newchrled.minor);
+    
+    //初始化字符设备
     newchrled.cdev.owner = THIS_MODULE;
     cdev_init(&newchrled.cdev, &led_fops);
 
@@ -193,51 +211,55 @@ static int __init led_init(void)
     retvalue = cdev_add(&newchrled.cdev, newchrled.devid, NEWCHRLED_CNT);
     if(retvalue < 0)
     {
-        printk("led driver add failed!\r\n");
-        goto fail_unregister;
+        printk("newchrled driver add failed!\r\n");
+        goto del_unregister;
     }
 
     //创建类
     newchrled.class = class_create(THIS_MODULE, NEWCHRLED_NAME);
     if(IS_ERR(newchrled.class))
     {
-        printk("led driver class create failed!\r\n");
+        printk("newchrled class create failed!\r\n");
         retvalue = PTR_ERR(newchrled.class);
-        goto fail_cdev;
+        goto del_cdev;
     }
 
     //创建设备
     newchrled.device = device_create(newchrled.class, NULL, newchrled.devid, NULL, NEWCHRLED_NAME);
     if(IS_ERR(newchrled.device))
     {
-        printk("led driver device create failed!\r\n");
+        printk("newchrled device create failed!\r\n");
         retvalue = PTR_ERR(newchrled.device);
-        goto fail_class;
+        goto destroy_class;
     }
 
+fail_map:
+    led_unmap();
+    return -EIO;
 
-    return 0;
-    destroy_class:
-        class_destroy(newchrled.class);
-    del_cdev:
-        cdev_del(&newchrled.cdev);
-    del_unregister:
-        unregister_chrdev_region(newchrled.devid, NEWCHRLED_CNT);
-    fail_map:
-        led_unmap();
-        return -EFAULT;
+del_unregister:
+    unregister_chrdev_region(newchrled.devid, NEWCHRLED_CNT);
+    return -EIO;
+
+del_cdev:
+    cdev_del(&newchrled.cdev);
+    return -EIO;
+destroy_class:
+    class_destroy(newchrled.class);
+    return -EIO;
+
 }
+
 
 
 
 static void __exit led_exit(void)
 {
-    // //注销字符设备驱动
+    //注销字符设备驱动
     // unregister_chrdev(LED_MAJOR, LED_NAME);
     //取消寄存器重映射
     led_unmap();
 
-    //注销设备
     cdev_del(&newchrled.cdev);
     unregister_chrdev_region(newchrled.devid, NEWCHRLED_CNT);
     device_destroy(newchrled.class, newchrled.devid);
@@ -248,4 +270,4 @@ module_init(led_init);
 module_exit(led_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("chen");
-module_INFO(intree,"Y");
+MODULE_INFO(intree, "Y");

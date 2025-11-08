@@ -15,53 +15,60 @@
 #define LEDOFF 0
 #define LEDON 1
 
-#define PMU_GRF_BASE                      (0xFD5F8000)
-#define BUS_IOC_BASE                      (0xFD5F8000)
+#define PMU_GRF_BASE                       (0xFD5F8000)
+#define PMU2_IOC                           (0xFD5F4000)
 //#define VCCIO1_4_BASE                     (0xFD5F8000)
-#define GPIO0_BASE                        (0xFD8A0000)
+#define GPIO0_BASE                         (0xFD8A0000)
 
 
-#define BUS_IOC_GPIO0C_IOMUX_SEL_L       (BUS_IOC_BASE + 0x0010) 
+#define PMU2_IOC_GPIO0C_IOMUX_SEL_H       (PMU2_IOC + 0x0008) 
 //#define VCCIO1_4_IOC_GPIO0C_DS_L        (VCCIO1_4_BASE + 0x0020) 
-#define GPIO_SWPORT_DR_L                (GPIO0_BASE + 0X0000) 
-#define GPIO_SWPORT_DDR_L               (GPIO0_BASE + 0X0008)
+#define GPIO_SWPORT_DR_H                  (GPIO0_BASE + 0X0004) 
+#define GPIO_SWPORT_DDR_H                 (GPIO0_BASE + 0X000C)
 
 
-static void __iomem *BUS_IOC_GPIO0C_IOMUX_SEL_L_VA;
+static void __iomem *PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA;
 //static void __iomem *VCCIO1_4_IOC_GPIO0C_DS_L_VA;
-static void __iomem *GPIO_SWPORT_DR_L_VA;
-static void __iomem *GPIO_SWPORT_DDR_L_VA;
+static void __iomem *GPIO_SWPORT_DR_H_VA;
+static void __iomem *GPIO_SWPORT_DDR_H_VA;
 
 
 void led_switch(u8 state)
 {
     u32 val = 0;
-    val = readl(GPIO_SWPORT_DR_L_VA);
+
     if(state == LEDON)
     {
-        val &= ~(1<<12);
+        val = readl(GPIO_SWPORT_DR_H_VA);
+        val &= ~(0X20<<0);
+        val |= (0X20<<16) | (0X20<<0);
+        writel(val, GPIO_SWPORT_DR_H_VA);
     }
     else if(state == LEDOFF)
     {
-        val |= (1<<12);
+        writel(val, GPIO_SWPORT_DR_H_VA);
+        val = readl(GPIO_SWPORT_DR_H_VA);
+        val &= ~(0X20<<0);
+        val |= (0X20<<16);
+        writel(val, GPIO_SWPORT_DR_H_VA);
     }
-    writel(val, GPIO_SWPORT_DR_L_VA);
+    
 }
 
 void led_remap(void)
 {
-    BUS_IOC_GPIO0C_IOMUX_SEL_L_VA = ioremap(BUS_IOC_GPIO0C_IOMUX_SEL_L, 4);
+    PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA = ioremap(PMU2_IOC_GPIO0C_IOMUX_SEL_H, 4);
     //VCCIO1_4_IOC_GPIO0C_DS_L_VA = ioremap(VCCIO1_4_IOC_GPIO0C_DS_L, 4);
-    GPIO_SWPORT_DR_L_VA = ioremap(GPIO_SWPORT_DR_L, 4);
-    GPIO_SWPORT_DDR_L_VA = ioremap(GPIO_SWPORT_DDR_L, 4);
+    GPIO_SWPORT_DR_H_VA = ioremap(GPIO_SWPORT_DR_H, 4);
+    GPIO_SWPORT_DDR_H_VA = ioremap(GPIO_SWPORT_DDR_H, 4);
 }
 
 void led_unmap(void)
 {
-    iounmap(BUS_IOC_GPIO0C_IOMUX_SEL_L_VA);
+    iounmap(PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA);
     //iounmap(VCCIO1_4_IOC_GPIO0C_DS_L_VA);
-    iounmap(GPIO_SWPORT_DR_L_VA);
-    iounmap(GPIO_SWPORT_DDR_L_VA);
+    iounmap(GPIO_SWPORT_DR_H_VA);
+    iounmap(GPIO_SWPORT_DDR_H_VA);
 }
 
 
@@ -120,22 +127,29 @@ static int __init led_init(void)
     int retvalue;
     //寄存器重映射
     led_remap();
-    //设置gpio0C_12为gpio功能
-    val = readl(BUS_IOC_GPIO0C_IOMUX_SEL_L_VA);
-    val &= ~(0x3<<24);
-    val |= (0x1<<24);
+    //设置为gpio功能
+    val = readl(PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA);
+    val &= ~(0x00F0<<0);
+    val |= (0x00F0<<0) | (0x0<<0);
 
-    writel(val, BUS_IOC_GPIO0C_IOMUX_SEL_L_VA);
-    //设置gpio0C_12 40ohm的驱动能力
+    writel(val, PMU2_IOC_GPIO0C_IOMUX_SEL_H_VA);
+    //设置gpio 40ohm的驱动能力
     // val = readl(VCCIO1_4_IOC_GPIO0C_DS_L_VA);
     // val &= ~(0x3<<24);
     // val |= (0x1<<24);
 
     // writel(val, VCCIO1_4_IOC_GPIO0C_DS_L_VA);
-    //设置gpio0C_12为输出功能
-    val = readl(GPIO_SWPORT_DDR_L_VA);
-    val |= (1<<12);
-    writel(val, GPIO_SWPORT_DDR_L_VA);
+    //设置gpio为输出功能
+    val = readl(GPIO_SWPORT_DDR_H_VA);
+    val &= ~(0X20<<0);
+    val |= (0X20<<16) | (0X20<<0);
+    writel(val, GPIO_SWPORT_DDR_H_VA);
+
+    //设置gpio默认输出高电平，led关闭
+    val = readl(GPIO_SWPORT_DR_H_VA);
+    val &= ~(0X20<<0);
+    val |= (0X20<<16);
+    writel(val, GPIO_SWPORT_DR_H_VA);
 
     retvalue = register_chrdev(LED_MAJOR, LED_NAME, &led_fops);
     if(retvalue < 0)
@@ -144,12 +158,14 @@ static int __init led_init(void)
         goto fail_map; 
     }
     return 0;
-}
-
+    
 fail_map:
     led_unmap();
-    return -EFAULT;
+    return -EIO;
+
 }
+
+
 
 
 static void __exit led_exit(void)
@@ -164,4 +180,4 @@ module_init(led_init);
 module_exit(led_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("chen");
-module_INFO(intree,"Y");
+MODULE_INFO(intree, "Y");
