@@ -23,10 +23,10 @@ int main(int argc, char *argv[])
 
     ledstat = atoi(argv[1]);
 
-    fd = open("/dev/led", O_RDWR);
+    fd = open("/dev/newchrled", O_RDWR);
     if(fd < 0)
     {
-        printf("Can't open device file: /dev/led\n");
+        printf("Can't open device file: /dev/newchrled\n");
         return -1;
     }
 

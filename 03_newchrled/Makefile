@@ -8,5 +8,13 @@ build: kernel_modules
 
 kernel_modules:
 	$(MAKE) -C $(KERNELDIR) M=$(CURRENT_PATH) modules
+
+# build a simple user-space test app
+app: ledAPP
+
+ledAPP: ledAPP.c
+	$(CROSS_COMPILE)gcc -O2 -Wall -o $@ $<
+
 clean:
 	$(MAKE) -C $(KERNELDIR) M=$(CURRENT_PATH) clean
+	rm -f ledAPP
