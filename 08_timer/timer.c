@@ -1,0 +1,265 @@
+#include <linux/types.h>
+#include <linux/kernel.h>
+#include <linux/delay.h>
+#include <linux/ide.h>
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/errno.h>
+#include <linux/gpio.h>
+#include <linux/cdev.h>
+#include <linux/device.h>
+//#include <asm/mach/map.h>
+#include <asm/uaccess.h>
+#include <asm/io.h>
+
+#define TIMER_CNT  1               /*设备号个数 */
+#define TIMER_NAME "timer"       /*名字 */
+
+#define CLOSE_CMD 	(_IO(0XEF, 0x1))	/* 关闭定时器命令 */
+#define OPEN_CMD 	(_IO(0XEF, 0x2))	/* 打开定时器命令 */
+#define SETPERIOD_CMD 	(_IO(0XEF, 0x3))	/* 设置定时器周期命令 */
+
+
+
+#define LEDOFF 	0				        /* 关灯 */
+#define LEDON 	1				        /* 开灯 */
+
+struct timer_dev{
+    dev_t devid;            /* 设备号 */
+    struct cdev cdev;       /* cdev */
+    struct class *class;    /* 类 */
+    struct device *device;  /* 设备 */
+    int major;              /* 主设备 */
+    int minor;              /* 次设备号 */
+    struct device_node *nd; /* 设备节点 */
+    int led_gpio;           /* led所使用的GPIO编号 */
+    int timerperiod;      /* 定时器周期 */
+    struct timer_list timer; /* 定时器 */
+    spinlock_t lock;      /* 自旋锁 */
+};
+
+struct timer_dev timerdev; /* 定时器设备 */
+
+static int timer_open(struct inode *inode, struct file *filp)
+{
+    
+    filp->private_data = &timerdev;      /*设置私有数据 */
+
+    timerdev.timerperiod = 1000; //默认周期1秒
+
+
+    return 0;
+}
+
+static ssize_t timer_read(struct file *filp, char __user *buf, size_t cnt, loff_t *offt)
+{
+    return 0;
+}
+
+static long timer_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    struct timer_dev *dev = filp->private_data;
+    int timerperiod;
+    unsigned long flags;
+
+    switch(cmd)
+    {
+        case CLOSE_CMD:
+            del_timer_sync(&dev->timer);
+            printk("Timer closed\r\n");
+            break;
+        case OPEN_CMD:
+            mod_timer(&dev->timer, jiffies + msecs_to_jiffies(dev->timerperiod));
+            printk("Timer opened\r\n");
+            break;
+        case SETPERIOD_CMD:
+            spin_lock_irqsave(&dev->lock, flags);
+            dev->timerperiod = arg;
+            spin_unlock_irqrestore(&dev->lock, flags);
+            printk("Timer period set to %d ms\r\n", dev->timerperiod);
+            break;
+        default:
+            return -EINVAL;
+    }
+    return 0;
+}
+
+
+void timer_function(struct timer_list *t)
+{
+    struct timer_dev *dev = from_timer(dev, t, timer);
+    unsigned long flags;
+
+    //切换LED状态
+    led_switch(LEDON);
+    mdelay(100);
+    led_switch(LEDOFF);
+
+    //重新设置定时器
+    spin_lock_irqsave(&dev->lock, flags);
+    mod_timer(&dev->timer, jiffies + msecs_to_jiffies(dev->timerperiod));
+    spin_unlock_irqrestore(&dev->lock, flags);
+}
+
+
+static ssize_t timer_write(struct file *filp, const char __user *buf, size_t cnt, loff_t *offt)
+{
+    int retvalue;
+    unsigned char databuf[1];
+    unsigned char ledstat;
+    struct timer_dev *dev = filp->private_data;
+
+    retvalue = copy_from_user(databuf, buf, cnt);
+    if(retvalue < 0)
+    {
+        printk("kernel write failed!\r\n");
+        return -EFAULT; 
+    }
+
+    ledstat = databuf[0];
+    if(ledstat == LEDON)
+    {
+        led_switch(LEDON);  
+    }
+    else if(ledstat == LEDOFF)
+    {
+        led_switch(LEDOFF); 
+    }
+
+    return 0;
+}
+
+static int led_release(struct inode *inode, struct file *filp)
+{
+    return 0;
+}
+
+static struct file_operations led_fops = {
+    .owner = THIS_MODULE,
+    .open = led_open,
+    .read = led_read,
+    .write = led_write,
+    .release = led_release,
+};
+
+static int __init led_init(void)
+{
+    int ret = 0;
+    const char *str;
+    /* 获取设备树中的属性数据 */
+    gpioled.nd = of_find_node_by_path("/gpioled");
+    if(gpioled.nd == NULL){
+        printk("gpioled node not found!\r\n");
+        return -EINVAL;
+    }else{
+        printk("gpioled node found!\r\n");
+    }
+    //获取status属性内容
+    ret = of_property_read_string(gpioled.nd, "status", &str);
+    if(ret < 0){
+        printk("status read failed!\r\n");
+    }
+    else{
+        printk("status = %s\r\n", str);
+    }
+    //获取compatible属性内容
+    ret = of_property_read_string(gpioled.nd, "compatible", &str);
+    if(ret < 0){
+        printk("compatible read failed!\r\n");
+    }
+    else{
+        printk("compatible = %s\r\n", str);
+    }
+
+    //获取led所使用的GPIO编号
+    gpioled.led_gpio = of_get_named_gpio(gpioled.nd, "led-gpio", 0);
+    if(gpioled.led_gpio < 0){
+        printk("can't get led gpio\r\n");
+        return -EINVAL;
+    }
+    printk("led gpio num = %d\r\n", gpioled.led_gpio);
+
+    //申请GPIO
+    ret = gpio_request(gpioled.led_gpio, "led-gpio");
+    if(ret){
+        printk("gpio_request failed %d\r\n", ret);
+        return -EINVAL;
+    }
+
+    ret = gpio_direction_output(gpioled.led_gpio, 1); //默认关闭LED
+    if(ret){
+        printk("gpio_direction_output failed %d\r\n", ret);
+        goto fail_gpio;
+    }
+
+    /* 注册字符设备驱动 */
+    /* 1、创建设备号*/
+    if(gpioled.major){
+        gpioled.devid = MKDEV(gpioled.major, 0);   
+        ret = register_chrdev_region(gpioled.devid, GPIOLED_CNT, GPIOLED_NAME);
+        if(ret < 0){
+            pr_err("cannot register %s char driver [ret=%d]\n",GPIOLED_NAME, GPIOLED_CNT);
+            goto fail_gpio;
+        }
+    }else{         
+        ret = alloc_chrdev_region(&gpioled.devid, 0, GPIOLED_CNT, GPIOLED_NAME);
+        if(ret < 0){
+            pr_err("%s Couldn't alloc_chrdev_region, ret=%d\r\n",GPIOLED_NAME, ret);
+            goto fail_gpio;
+        }
+        gpioled.major = MAJOR(gpioled.devid);   
+        gpioled.minor = MINOR(gpioled.devid);   
+    }
+    printk("gpioled major=%d,minor=%d\r\n",gpioled.major, gpioled.minor);
+
+    /* 2、初始化cdev */
+    gpioled.cdev.owner = THIS_MODULE;
+    cdev_init(&gpioled.cdev, &led_fops);
+    ret = cdev_add(&gpioled.cdev, gpioled.devid, GPIOLED_CNT);
+    if(ret < 0){
+        pr_err("cdev_add failed, ret=%d\r\n", ret);
+        goto fail_gpio;
+    }
+    /* 4、创建类 */
+    gpioled.class = class_create(THIS_MODULE, GPIOLED_NAME);
+    if(IS_ERR(gpioled.class)){
+        ret = PTR_ERR(gpioled.class);
+        pr_err("class_create failed, ret=%d\r\n", ret);
+        goto del_cdev;
+    }
+    /* 5、创建设备 */
+    gpioled.device = device_create(gpioled.class, NULL, gpioled.devid, NULL, GPIOLED_NAME);
+    if(IS_ERR(gpioled.device)){
+        ret = PTR_ERR(gpioled.device);
+        pr_err("device_create failed, ret=%d\r\n", ret);
+        goto destroy_class;
+    }
+
+    timer_setup(&timerdev.timer, timer_function, 0);
+
+    fail_gpio:
+    return 0;
+    destroy_class:
+    class_destroy(gpioled.class);
+    del_cdev:
+    cdev_del(&gpioled.cdev);   
+    unregister_chrdev_region(gpioled.devid, GPIOLED_CNT);
+    return -EIO;
+}
+
+static void __exit led_exit(void)
+{
+    //关闭LED
+    led_switch(LEDOFF);
+    //释放GPIO
+    gpio_free(gpioled.led_gpio);
+    //注销字符设备驱动
+    device_destroy(gpioled.class, gpioled.devid);
+    class_destroy(gpioled.class);
+    cdev_del(&gpioled.cdev);
+    unregister_chrdev_region(gpioled.devid, GPIOLED_CNT);
+}
+
+module_init(led_init);
+module_exit(led_exit);
+MODULE_LICENSE("GPL");
