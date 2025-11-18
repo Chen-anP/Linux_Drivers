@@ -145,7 +145,7 @@ static int __init led_init(void)
     val |= (0X20<<16) | (0X20<<0);
     writel(val, GPIO_SWPORT_DDR_H_VA);
 
-    //设置gpio默认输出高电平，led关闭
+    //设置gpio默认输出低电平，led开启
     val = readl(GPIO_SWPORT_DR_H_VA);
     val &= ~(0X20<<0);
     val |= (0X20<<16);
