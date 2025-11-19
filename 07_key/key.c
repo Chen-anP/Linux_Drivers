@@ -214,3 +214,4 @@ static void __exit key_exit(void)
 module_init(key_init);
 module_exit(key_exit);
 MODULE_LICENSE("GPL");
+MODULE_AUTHOR("chen");

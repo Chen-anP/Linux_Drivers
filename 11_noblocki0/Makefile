@@ -2,7 +2,7 @@ export CROSS_COMPILE=/home/chen/orangepi-build/toolchains/gcc-arm-11.2-2022.02-x
 KERNELDIR := /home/chen/orangepi-build/kernel/orange-pi-5.10-rk35xx
 
 CURRENT_PATH := $(shell pwd)
-obj-m := atomic.o
+obj-m := blockio.o
 
 build: kernel_modules
 
@@ -17,4 +17,4 @@ ledAPP: ledAPP.c
 
 clean:
 	$(MAKE) -C $(KERNELDIR) M=$(CURRENT_PATH) clean
-	rm -f ledAPP
+	rm -f keyAPP
